@@ -1,7 +1,9 @@
 import os
 import shutil
+from typing import List
 
-def perform(rds: [str], wd: str):
+
+def perform(rds: List[str], wd: str):
     if any(not os.path.isdir(d) for d in rds) or not os.path.isdir(wd):
         raise ValueError("At least one of the arguments is not a directory.")
 

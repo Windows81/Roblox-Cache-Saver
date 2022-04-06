@@ -2,6 +2,7 @@ import os
 from pip import List
 import struct
 import io
+import argparse
 
 
 class mesh_v1:
@@ -60,14 +61,17 @@ class mesh_v2:
         c: int
 
 
-def convert(inputFile: io.FileIO, outputFile: io.FileIO) -> bool:
+def convert(inputFile: io.BufferedReader, outputFile: io.BufferedWriter) -> bool:
     # https://devforum.roblox.com/t/roblox-mesh-format/326114
 
-    version = inputFile.read(13)
-    # print(version)
+    word = inputFile.read(8)
+    if word != b"version ":
+        print("Not a ROBLOX .mesh file!")
+        return False
+    version = inputFile.read(5)
 
-    if version == b"version 1.00\n" or version == b"version 1.01\n":
-        scale = 0.5 if version == b"version 1.00\n" else 1.0
+    if version == b"1.00\n" or version == b"1.01\n":
+        scale = 0.5 if version == b"1.00\n" else 1.0
         strNumFaces = inputFile.readline()
 
         numFaces = int(strNumFaces)
@@ -154,13 +158,10 @@ def convert(inputFile: io.FileIO, outputFile: io.FileIO) -> bool:
             outputFile.write(bytes(f"{i}/{i}/{i}\n", "UTF-8"))
         return True
 
-    if version == b"version 2.00\n":
+    if version == b"2.00\n":
 
         # One short, two unsigned chars, two unsigned ints.
         header_f = "HBBII"
-
-        # Eight floats, four signed bytes, four unsigned bytes.
-        vertex_f = "ffffffffbbbbBBBB"
 
         # Three unsigned ints.
         face_f = "III"
@@ -176,37 +177,49 @@ def convert(inputFile: io.FileIO, outputFile: io.FileIO) -> bool:
         ) = struct.unpack(header_f, inputFile.read(header_s))
 
         if header.sizeof_MeshHeader != header_s:
-            print("ERROR: Mesh header size invalid")
+            print("ERROR: Mesh header size invalid.")
             return False
 
         vertices: List[mesh_v2.Vertex] = header.numVerts * [None]
         faces: List[mesh_v2.Face] = header.numFaces * [None]
 
+        vertex_f = {
+            # Eight floats, four signed bytes, four unsigned bytes.
+            40: "ffffffffbbbbBBBB",
+            # Eight floats, four signed bytes.
+            36: "ffffffffbbbb",
+        }.get(header.sizeof_Vertex)
+
         # Read vertex array
-        noColor = header.sizeof_Vertex != 40
         for i in range(0, len(vertices)):
             v = vertices[i] = mesh_v2.Vertex()
+            a = struct.unpack(vertex_f, inputFile.read(header.sizeof_Vertex))
+            if header.sizeof_Vertex == 36:
+                a += (255, 255, 255, 255)
             (
                 v.px,
                 v.py,
                 v.pz,
+            ) = a[0:3]
+            (
                 v.nx,
                 v.ny,
                 v.nz,
+            ) = a[3:6]
+            (
                 v.tu,
                 v.tv,
                 v.tx,
                 v.ty,
                 v.tz,
                 v.ts,
+            ) = a[6:12]
+            (
                 v.r,
                 v.g,
                 v.b,
                 v.a,
-            ) = struct.unpack(vertex_f, inputFile.read(header.sizeof_Vertex))
-
-            if noColor:
-                v.r = v.g = v.b = v.a = 255
+            ) = a[12:16]
 
         # Read face array
         for i in range(0, len(faces)):
@@ -217,7 +230,7 @@ def convert(inputFile: io.FileIO, outputFile: io.FileIO) -> bool:
             f.c += 1
 
         # Output.
-        outputFile.write(b"# ROBLOX .mesh version 2.00\n")
+        outputFile.write(b"# ROBLOX .mesh version 2.00.\n")
 
         # Write vertex position data.
         for v in vertices:
@@ -240,24 +253,21 @@ def convert(inputFile: io.FileIO, outputFile: io.FileIO) -> bool:
             outputFile.write(bytes(f"{f.c}/{f.c}/{f.c}\n", "UTF-8"))
         return True
 
-    print(f"ERROR: Unknown version {version}")
+    print(f"ERROR: Unknown version {version}.")
     return False
 
 
 if __name__ == "__main__":
-    convert(
-        open(
-            os.path.join(
-                os.path.dirname(__file__), "cache", "079a5f09118f549d48103344c0b9325c"
-            ),
-            "rb",
-        ),
-        open(
-            os.path.join(
-                os.path.dirname(__file__),
-                "cache",
-                "obj.obj",
-            ),
-            "wb",
-        ),
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", type=os.path.abspath)
+    parser.add_argument("output", type=os.path.abspath)
+    args = parser.parse_args()
+
+    i = open(args.input, "rb")
+    o = open(args.output, "xb")
+    s = convert(i, o)
+    i.close()
+    o.close()
+    if not s:
+        os.remove(args.output)
+        exit(1)
